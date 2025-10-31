@@ -93,8 +93,8 @@ Setup for Prometheus Client should be given Below ....
 
 - `SERVICE_NAME` — service/job name used when pushing to Pushgateway. Default: `jweroai-service`.
 - `HOSTNAME` — instance name. Default: resolved via `os.hostname()`.
-- `PUSHGATEWAY_URL` — Pushgateway address. Default: `http://192.168.1.99:9091` (your local setup). Change to production Pushgateway URL in production.
-- `LOKI_URL` — Loki server URL used by `winston-loki`. Default used in code: `http://192.168.1.99:3100`. Change for production.
+- `PUSHGATEWAY_URL` — Pushgateway address. Default: `http://127.0.0.1:9091` (your local setup). Change to production Pushgateway URL in production.
+- `LOKI_URL` — Loki server URL used by `winston-loki`. Default used in code: `http://127.0.0.1:3100`. Change for production.
 - `NODE_ENV` — environment label for logs (`dev`/`prod`). Default: `dev`.
 - `PORT` (if your full app listens on a port) — ensure Prometheus `prometheus-config.yml` has the correct target port.
 
@@ -217,7 +217,7 @@ appExpress.get("/metrics", async (req, res) => {
   res.end(await client.register.metrics());
 });
 
-const PUSHGATEWAY_URL = process.env.PUSHGATEWAY_URL || "http://192.168.1.99:9091";
+const PUSHGATEWAY_URL = process.env.PUSHGATEWAY_URL || "http://127.0.0.1:9091";
 const pushgateway = new client.Pushgateway(PUSHGATEWAY_URL);
 
 const crashCounter = new client.Counter({
@@ -261,7 +261,7 @@ async function pushMetrics(reason = "unknown") {
 
 // 1) create the loki transport with static labels only
 const lokiTransport = new LokiTransport({
-  host: "http://192.168.1.99:3100",
+  host: "http://127.0.0.1:3100",
   labels: {
     Server: "logs",
     env: process.env.NODE_ENV || "dev"
