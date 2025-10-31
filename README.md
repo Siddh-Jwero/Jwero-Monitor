@@ -250,7 +250,9 @@ async function pushMetrics(reason = "unknown") {
     console.error("❌ Failed to push metrics to Pushgateway:", err);
   }
 }
-setTimeout(() => { throw new Error('Test crash'); }, 2000);
+
+
+//setTimeout(() => { throw new Error('Test crash'); }, 2000);
 //testing crash
 
 // ---------------------------------------------------------------------------
