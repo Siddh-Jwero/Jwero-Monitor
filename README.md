@@ -106,8 +106,7 @@ Setup for Prometheus Client should be given Below ....
 
 ### `index.js` (snippet)
 ```js
-const client = require("prom-client"); // Metrics client//added for dynamic llms
-
+const client = require("prom-client"); // Metrics client
 const winston = require("winston");
 const LokiTransport = require("winston-loki");
 const { createLogger, transports, format } = winston;
@@ -119,12 +118,29 @@ const INSTANCE = process.env.HOSTNAME || require("os").hostname();
 const appExpress = express();
 
 
+
+
+
 // ---------------------------------------------------------------------------
-// :brain: PROMETHEUS METRICS + PUSHGATEWAY
+// 🧠 PROMETHEUS METRICS + PUSHGATEWAY
 // ---------------------------------------------------------------------------
 
 const collectDefaultMetrics = client.collectDefaultMetrics;
 collectDefaultMetrics({ register: client.register });
+
+// ===== add these metric definitions (near your other metrics) =====
+const httpRequestsByIP = new client.Counter({
+  name: "http_requests_total_by_ip",
+  help: "Total HTTP requests grouped by client IP",
+  labelNames: ["ip"],
+});
+
+const httpRequestsByIPRouteMethod = new client.Counter({
+  name: "http_requests_total_by_ip_route_method",
+  help: "Total HTTP requests grouped by ip + route + method",
+  labelNames: ["ip", "route", "method"],
+});
+
 
 const reqResTime = new client.Histogram({
   name: "http_express_req_res_time",
@@ -137,18 +153,63 @@ const totalRequests = new client.Counter({
   help: "Total number of HTTP requests",
 });
 
-// Use response-time middleware with proper callback
-appExpress.use(responseTime(function (req, res, time) {
-  //if (req.path) 
-    {  // Only record metrics for routes that exist
-    //totalRequests.inc();
-    reqResTime.labels({
-      method: req.method,
-      route: req.path,  // Use route.path for better grouping
-      status_code: res.statusCode,
-    }).observe(time);
-  }
-}));
+
+
+// ===== helper to sanitize route patterns (replace ids/uuids/numbers) =====
+function sanitizeRoute(path) {
+  if (!path) return "unknown";
+  // replace UUIDs, long hex ids, numeric ids with :id
+  return path
+    .replace(/[0-9a-fA-F]{24,}/g, ":id")        // long hex (mongodb ids)
+    .replace(/[0-9a-fA-F\-]{36}/g, ":id")       // UUID-ish
+    .replace(/\d+/g, ":id")                     // any numeric segment
+    // limit length
+    .substring(0, 200);
+}
+
+// ensure Express honours X-Forwarded-For headers if behind a proxy
+appExpress.set("trust proxy", true);
+
+
+
+// ===== replace existing response-time usage with this improved block =====
+appExpress.use(
+  responseTime(function (req, res, time) {
+    try {
+      // --- determine client IP (respect X-Forwarded-For) ---
+      const xff = req.headers["x-forwarded-for"] || req.headers["X-Forwarded-For"];
+      let ip = (xff && String(xff).split(",")[0].trim()) || req.ip || req.connection?.remoteAddress || req.socket?.remoteAddress || "unknown";
+      // normalize IPv6-mapped IPv4 like ::ffff:1.2.3.4
+      ip = ip.replace(/^::ffff:/, "");
+
+      // --- determine route pattern if available, otherwise sanitize originalUrl ---
+      // req.route is usually available after route matched; fallback to sanitize originalUrl
+      const route =
+        (req.route && (req.baseUrl || "") + (req.route.path || "")) || sanitizeRoute(req.originalUrl);
+
+      const method = req.method || "UNKNOWN";
+      const statusCode = String(res.statusCode || 0);
+
+      // truncate labels to safe length (avoid overly long label values)
+      const safeRoute = String(route).substring(0, 200);
+      const safeIP = String(ip).substring(0, 45);
+
+      // Observe latency histogram
+      reqResTime.labels({ method, route: safeRoute, status_code: statusCode }).observe(time);
+
+      // Increment counters for top-IP and ip+route+method breakdown
+      httpRequestsByIP.inc({ ip: safeIP }, 1);
+      httpRequestsByIPRouteMethod.inc({ ip: safeIP, route: safeRoute, method }, 1);
+
+      // (optional) also increment your existing totalRequests if desired
+      if (typeof totalRequests?.inc === "function") totalRequests.inc();
+    } catch (e) {
+      // avoid crashing metrics collection if something odd happens
+      logger.warn("Metrics instrumentation error", { meta: { err: e && e.stack || e }});
+    }
+  })
+);
+
 
 
 appExpress.get("/metrics", async (req, res) => {
@@ -184,16 +245,16 @@ async function pushMetrics(reason = "unknown") {
       registry: client.register,
       critical: true,
     });
-    logger.info(":white_check_mark: Pushed metrics to Pushgateway", { meta: { reason } });
+    logger.info("✅ Pushed metrics to Pushgateway", { meta: { reason } });
   } catch (err) {
-    console.error(":x: Failed to push metrics to Pushgateway:", err);
+    console.error("❌ Failed to push metrics to Pushgateway:", err);
   }
 }
-//setTimeout(() => { throw new Error('Test crash'); }, 2000);
+setTimeout(() => { throw new Error('Test crash'); }, 2000);
 //testing crash
 
 // ---------------------------------------------------------------------------
-// :scroll: LOKI + WINSTON LOGGER SETUP
+// 📜 LOKI + WINSTON LOGGER SETUP
 // ---------------------------------------------------------------------------
 
 // 1) create the loki transport with static labels only
@@ -286,7 +347,7 @@ function logErrorObject(err, message = "Error occurred", extraMeta = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// :warning: GLOBAL ERROR + SHUTDOWN HANDLERS
+// ⚠️ GLOBAL ERROR + SHUTDOWN HANDLERS
 // ---------------------------------------------------------------------------
 
 // -------------------- FATAL HANDLERS (use flushAndExit) --------------------
